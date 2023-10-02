@@ -83,6 +83,7 @@ predict.regsubsets = function(object,newdata,id,...){
 #number of subsets
 k=5
 
+## Manually conduct 5 fold cross validation to get MSE 
 #Get the randomized 5 folds
 set.seed(2337)
 folds = sample(1:k, nrow(train_data), replace = TRUE)
