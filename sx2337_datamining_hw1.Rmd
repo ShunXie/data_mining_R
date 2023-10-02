@@ -66,6 +66,9 @@ test_data <- prostate[68:length(prostate$lcavol), ]
 x <- model.matrix(lpsa ~ lcavol + lweight + age + lbph + svi + lcp + gleason + pgg45,train_data)[,-1]
 y <- train_data$lpsa
 
+#get test data x design matrix and y response value
+x_test <- model.matrix(lpsa ~ lcavol + lweight + age + lbph + svi + lcp + gleason + pgg45,test_data)[,-1]
+y_test <- train_data$lpsa
 
 
 # define the predict function
@@ -118,11 +121,19 @@ points(optimal_size, MSE[optimal_size][1], col = "red", cex = 2, pch = 20)
 
 #final model with all predictors
 lmodel1 <- lm(lpsa ~ lcavol + lweight + age + lbph + svi + lcp + gleason + pgg45,train_data)
+#get summary 
 summary1 <- summary(lmodel1)
-y_pred1 <- predict(lmodel1, newdata = test_data)
 summary1
-mean((test_data$lpsa-y_pred1)^2)
-sd((test_data$lpsa-y_pred1)^2)
+#Get coefficient
+coef1 = summary1$coefficients[,1]
+
+#get test mse and sd
+y_pred1 <- predict(lmodel1, newdata = test_data)
+mse1 = mean((test_data$lpsa-y_pred1)^2)
+sd1 = sd((test_data$lpsa-y_pred1)^2)
+print(sprintf("test mse: %.3f", mse1))
+print(sprintf("test sd: %.3f", sd1))
+
 ```
 
 Thus, the test MSE is 2.204 and standard deviation of 2.374 with a model chosen by cv with 8 predictors (full model).
@@ -152,14 +163,18 @@ plot(summary(cv_fit)$bic, xlab = "Number of Predictors", ylab = "BIC", type = "l
 
 #final model 
 lmodel2 <- lm(lpsa ~ lcavol + lweight,train_data)
+#Get summary
 summary2 <- summary(lmodel2)
+summary2
+#get coefficient
+coef2 = append(summary2$coefficients[,1],rep(0,6))
+
+#get test mse and sd
 y_pred2 <- predict(lmodel2, newdata = test_data)
 mse2 <- mean((test_data$lpsa-y_pred2)^2)
 sd2 <- sd((test_data$lpsa-y_pred2)^2)
-
-summary2
-print(mse2)
-print(sd2)
+print(sprintf("test mse: %.3f", mse2))
+print(sprintf("test sd: %.3f", sd2))
 ```
 
 Thus, the test MSE is 1.536 and standard deviation of 1.808 with a model chosen by cv with 2 predictors.
@@ -191,28 +206,30 @@ cv_mse <- lasso_cv$cvm
 plot(lasso_cv)
 
 #Get best lambda
-optimal_lambda <- lasso_cv$lambda.min
-print(sprintf("Optimal Lambda: %.3f", optimal_lambda))
+cv_optimal_lambda <- lasso_cv$lambda.min
+print(sprintf("Optimal Lambda: %.3f", cv_optimal_lambda))
 
 #fit the final Lasso model using the optimal lambda on the training data
 final_model_cvlasso <- glmnet(
   x = x,
   y = y,
   alpha = 1,
-  lambda = optimal_lambda
+  lambda = cv_optimal_lambda
 )
 
-#Get predictions
-y_pred3 <- predict(final_model_cvlasso, newx = x)
+#Get test mse and sd
+y_pred3 <- predict(final_model_cvlasso, newx = x_test)
 mse3 <- mean((test_data$lpsa-y_pred3)^2)
 sd3 <- sd((test_data$lpsa-y_pred3)^2)
 
-predict(final_model_cvlasso, s='lambda.min', type='coefficients')
-print(mse3)
-print(sd3)
+#get coefficient
+coef3 = predict(final_model_cvlasso, s='lambda.min', type='coefficients')[,1]
+
+print(sprintf("test mse: %.3f", mse3))
+print(sprintf("test sd: %.3f", sd3))
 ```
 
-The model chosen by cv has $\lambda$=0.010. It includes all 8 predictors. The test MSE is 3.662 and standard deviation is 3.198. 
+The model chosen by cv has $\lambda$=0.010. It includes all 8 predictors. The test MSE is 2.118 and standard deviation is 2.270 
 
 
 \newpage
@@ -248,31 +265,33 @@ for (i in seq_along(lambda_seq)) {
 
 
 #plot cross-validation estimates of MSE
-plot(log(lambda_seq),bic_values,type = "l", xlab = "Lambda", ylab = "BIC")
+plot(log(lambda_seq),bic_values,type = "l", xlab = "log lambda", ylab = "BIC")
 
 #Get best lambda
-optimal_lambda <- lambda_seq[which.min(bic_values)]
-print(sprintf("Optimal Lambda: %.3f", optimal_lambda))
+bic_optimal_lambda <- lambda_seq[which.min(bic_values)]
+print(sprintf("Optimal Lambda: %.3f", bic_optimal_lambda))
 
 #fit the final Lasso model using the optimal lambda on the training data
 final_model_biclasso <- glmnet(
   x = x,
   y = y,
   alpha = 1,
-  lambda = optimal_lambda
+  lambda = bic_optimal_lambda
 )
 
-#Get predictions
-y_pred4 <- predict(final_model_biclasso, newx = x)
+#Get test mse and sd
+y_pred4 <- predict(final_model_biclasso, newx = x_test)
 mse4 <- mean((test_data$lpsa-y_pred4)^2)
 sd4 <- sd((test_data$lpsa-y_pred4)^2)
 
-predict(final_model_biclasso, s='lambda.min', type='coefficients')
-print(mse4)
-print(sd4)
+#Get coefficient
+coef4 = coef(final_model_biclasso)[,1]
+
+print(sprintf("test mse: %.3f", mse4))
+print(sprintf("test sd: %.3f", sd4))
 ```
 
-The model chosen by bic has $\lambda$=0.254. It only includes 2 predictors, lcavol and lweight. The test MSE is 3.486 and standard deviation is 3.110.
+The model chosen by bic has $\lambda$=0.254. It only includes 2 predictors, lcavol and lweight. The test MSE is 2.508 and standard deviation is 2.426.
 
 
 \newpage
@@ -301,14 +320,17 @@ plot(pcr_fit$results$RMSE**2,type = "l", xlab = "# Component", ylab = "MSE")
 ggplot(pcr_fit,highlight=TRUE)+theme_bw()
 
 
-#Get predictions
-y_pred5 <- predict(pcr_fit, newx = x)
+
+
+#Get test mse and sd
+y_pred5 <- predict(pcr_fit, newx = x_test)
 mse5 <- mean((test_data$lpsa-y_pred5)^2)
 sd5 <- sd((test_data$lpsa-y_pred5)^2)
 
-
-print(mse5)
-print(sd5)
+#get coefficients
+coef5 = coef(pcr_fit$finalModel)[1:8]
+print(sprintf("test mse: %.3f", mse5))
+print(sprintf("test sd: %.3f", sd5))
 
 ```
 
@@ -319,5 +341,26 @@ Thus, the test MSE is 3.680 and standard deviation is 3.239. The final model has
 
 ### Discussion 
 
-It can be seen that model chosen using BIC has a lower number of parameters included in the final model. For example, both best subset method and lasso using BIC criterion choose a model with 2 predictors. On the other hand, both methods using cv choose a full model with 8 predictors. Although training MSE is smaller using cross validation, model chosen by BIC seems to perform better on test data in our case. The final result shows that best subset method using BIC has the best performance on test data, with test MSE 1.536.
+```{r}
+#Get output table from coeff
+output <- rbind(bestsubset_cv = coef1,
+                     bestsubset_bic = coef2,
+                     lasso_cv = coef3,
+                     lasso_bic = coef4,
+                     pcr_cv = coef5)
+#Get all test mse and sd
+output <- cbind(output, 
+                test_mse = c(mse1, mse2,mse3, mse4,mse5), 
+                test_sd = c(sd1, sd2, sd3,sd4,sd5))
+#Specify row name
+rownames(output) <- c("bestsubset_cv","bestsubset_bic","lasso_cv","lasso_bic","pcr_cv")
+
+#output table 
+output %>% knitr::kable(digits=2,col.names = c("intercept", "lcavol", "lweight", "age", "lbph", "svi", "lcp", "gleason", "pgg45", "Test MSE", "Test SD"))
+
+
+```
+
+
+It can be seen that model chosen using BIC has a lower number of parameters included in the final model. (0.00 means that the predictor is not included in the model) For example, both best subset method and lasso using BIC criterion choose a model with 2 predictors. On the other hand, both methods using cv choose a full model with 8 predictors. Although training MSE is smaller using cross validation, model chosen by BIC seems to perform better on test data for best subset method in our case. The final result shows that best subset method using BIC has the best performance on test data, with test MSE 1.536.
 
