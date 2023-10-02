@@ -1,0 +1,323 @@
+---
+title: "sx2337_datamining_hw1_coding"
+author: "Shun Xie"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lipsum}
+- \pagestyle{fancy}
+- \fancyhead[R]{\thepage}
+- \fancypagestyle{plain}{\pagestyle{fancy}}
+--- 
+
+\newpage
+
+# Q3
+
+
+### Part 1: Best-subset linear regression with k chosen by 5-fold cross-validation
+
+
+
+```{r,warning=FALSE,message=FALSE}
+library(leaps)
+library(boot)
+library(genridge)
+library(dplyr)
+library(forcats)
+library(ISLR)
+library(glmnet)
+library(caret)
+library(stats)
+library(pls)
+#get data
+data(prostate)
+
+```
+
+```{r}
+#Preprocessing
+prostate_tmp <- prostate %>%
+    mutate(train = fct_relevel(factor(train), "TRUE", "FALSE"),
+           gleason = fct_relevel(factor(gleason), "6", "7"),
+           svi = factor(svi))
+
+#shuffle the data
+set.seed(2337)
+prostate_shuffle <- prostate[sample(nrow(prostate_tmp)), ]
+
+#get the training and test sets
+train_data <- prostate[1:67, ]
+test_data <- prostate[68:length(prostate$lcavol), ]
+
+
+
+
+
+
+#get training data x design matrix and y response value
+x <- model.matrix(lpsa ~ lcavol + lweight + age + lbph + svi + lcp + gleason + pgg45,train_data)[,-1]
+y <- train_data$lpsa
+
+
+
+# define the predict function
+predict.regsubsets = function(object,newdata,id,...){
+      form = as.formula(object$call[[2]]) #extract the formula of regsubset
+      mat = model.matrix(form,newdata)    #get the model matrix
+      coefi = coef(object,id=id)          #get the coefficient with i number of predictors
+      xvars = names(coefi)                #get the name of predictors
+      mat[,xvars]%*%coefi               #make prediction using new data
+}
+
+#number of subsets
+k=5
+
+#Get the randomized 5 folds
+set.seed(2337)
+folds = sample(1:k, nrow(train_data), replace = TRUE)
+
+#initialization to store matrix
+cv_error = matrix(NA, k, 8, dimnames = list(NULL, paste(1:8)))
+
+#For all 5-fold data
+for(j in 1:k){
+    #perform the best subset on the train dataset except for the jth field
+    best_fit = regsubsets(lpsa ~ lcavol + lweight + age + lbph + svi + lcp + gleason + pgg45, data = train_data[folds!=j,], nvmax=8)
+    #loop over at most 8 parameters. 
+    for(i in 1:8){
+        #predict the values of the current fold from regsubset with i predictors
+        pred = predict(best_fit, train_data[folds==j,], id=i)
+        #calculate the MSE
+        cv_error[j,i] = mean((train_data$lpsa[folds==j]-pred)^2)
+    }
+}
+
+
+#get the mean for each fold (apply on columns)
+MSE = apply(cv_error, 2, mean)
+
+#find the number of predictor with minimum mse value 
+optimal_size = which.min(MSE)
+
+#plot cv error, with optimal point
+plot(MSE, type='b')
+points(optimal_size, MSE[optimal_size][1], col = "red", cex = 2, pch = 20)
+
+
+
+
+
+
+#final model with all predictors
+lmodel1 <- lm(lpsa ~ lcavol + lweight + age + lbph + svi + lcp + gleason + pgg45,train_data)
+summary1 <- summary(lmodel1)
+y_pred1 <- predict(lmodel1, newdata = test_data)
+summary1
+mean((test_data$lpsa-y_pred1)^2)
+sd((test_data$lpsa-y_pred1)^2)
+```
+
+Thus, the test MSE is 2.204 and standard deviation of 2.374 with a model chosen by cv with 8 predictors (full model).
+
+\newpage
+
+### Part 2: best-subset linear regression with k chosen by BIC
+
+```{r}
+
+# Perform best-subset linear regression with 5-fold cross-validation
+cv_fit <- regsubsets(
+  x=x, y=y,
+  data = train_data,
+  nvmax = length(train_data),
+  really.big = TRUE,  # Required for BIC
+  criterion = "bic"  # Use BIC for model selection
+)
+
+
+#Plot the predicted error using bic
+summary(cv_fit)
+plot(summary(cv_fit)$bic, xlab = "Number of Predictors", ylab = "BIC", type = "l")
+
+
+
+
+#final model 
+lmodel2 <- lm(lpsa ~ lcavol + lweight,train_data)
+summary2 <- summary(lmodel2)
+y_pred2 <- predict(lmodel2, newdata = test_data)
+mse2 <- mean((test_data$lpsa-y_pred2)^2)
+sd2 <- sd((test_data$lpsa-y_pred2)^2)
+
+summary2
+print(mse2)
+print(sd2)
+```
+
+Thus, the test MSE is 1.536 and standard deviation of 1.808 with a model chosen by cv with 2 predictors.
+
+
+\newpage
+
+### Part 3: lasso regression with $\lambda$ chosen by 5-fold cross-validation
+
+```{r}
+
+# Set up a range of lambda values to try
+lambda_seq <- 10^seq(10, -2, length = 300)
+
+#Lasso regression with 5-fold cross-validation
+set.seed(2337)
+lasso_cv <- cv.glmnet(
+  x = x,
+  y = y,
+  alpha = 1,      #lasso for 1
+  nfolds = 5,
+  lambda =lambda_seq
+)
+
+#Get all MSE value for lasso
+cv_mse <- lasso_cv$cvm
+
+#plot cross-validation estimates of MSE
+plot(lasso_cv)
+
+#Get best lambda
+optimal_lambda <- lasso_cv$lambda.min
+print(sprintf("Optimal Lambda: %.3f", optimal_lambda))
+
+#fit the final Lasso model using the optimal lambda on the training data
+final_model_cvlasso <- glmnet(
+  x = x,
+  y = y,
+  alpha = 1,
+  lambda = optimal_lambda
+)
+
+#Get predictions
+y_pred3 <- predict(final_model_cvlasso, newx = x)
+mse3 <- mean((test_data$lpsa-y_pred3)^2)
+sd3 <- sd((test_data$lpsa-y_pred3)^2)
+
+predict(final_model_cvlasso, s='lambda.min', type='coefficients')
+print(mse3)
+print(sd3)
+```
+
+The model chosen by cv has $\lambda$=0.010. It includes all 8 predictors. The test MSE is 3.662 and standard deviation is 3.198. 
+
+
+\newpage
+
+
+
+### Part 4: lasso regression with $\lambda$ chosen by BIC.
+
+```{r,warning=FALSE}
+
+
+# Set up a range of lambda values to try
+lambda_seq <- 10^seq(10, -2, length = 300)
+
+#initialization for bic vector with all 0
+bic_values <- rep(0, length(lambda_seq))
+
+#iterate all values to get bic
+for (i in seq_along(lambda_seq)) {
+    lasso_model <- glmnet(
+    x = x,
+    y = y,
+    alpha = 1,     
+    lambda = lambda_seq[i]
+  )
+  tLL <- lasso_model$nulldev - deviance(lasso_model)
+  k <- lasso_model$df
+  n <- lasso_model$nobs
+  
+  #Get BIC
+  bic_values[i] <- log(n)*k - tLL
+}
+
+
+#plot cross-validation estimates of MSE
+plot(log(lambda_seq),bic_values,type = "l", xlab = "Lambda", ylab = "BIC")
+
+#Get best lambda
+optimal_lambda <- lambda_seq[which.min(bic_values)]
+print(sprintf("Optimal Lambda: %.3f", optimal_lambda))
+
+#fit the final Lasso model using the optimal lambda on the training data
+final_model_biclasso <- glmnet(
+  x = x,
+  y = y,
+  alpha = 1,
+  lambda = optimal_lambda
+)
+
+#Get predictions
+y_pred4 <- predict(final_model_biclasso, newx = x)
+mse4 <- mean((test_data$lpsa-y_pred4)^2)
+sd4 <- sd((test_data$lpsa-y_pred4)^2)
+
+predict(final_model_biclasso, s='lambda.min', type='coefficients')
+print(mse4)
+print(sd4)
+```
+
+The model chosen by bic has $\lambda$=0.254. It only includes 2 predictors, lcavol and lweight. The test MSE is 3.486 and standard deviation is 3.110.
+
+
+\newpage
+
+
+### Part 5: Principle component regression with q chosen by 5-fold cross-validation
+
+```{r, warning=FALSE}
+#train control 
+ctrl1 <- trainControl(method="cv",
+                      repeats=5,
+                      selectionFunction = 'best')
+
+set.seed(2337)
+
+#train the pcr and use cv
+pcr_fit <- train(
+    x=x,
+    y=y,
+    method='pcr',
+    tuneGrid = data.frame(ncomp=1:8),
+    trControl = ctrl1,
+    scale = TRUE)
+
+plot(pcr_fit$results$RMSE**2,type = "l", xlab = "# Component", ylab = "MSE")
+ggplot(pcr_fit,highlight=TRUE)+theme_bw()
+
+
+#Get predictions
+y_pred5 <- predict(pcr_fit, newx = x)
+mse5 <- mean((test_data$lpsa-y_pred5)^2)
+sd5 <- sd((test_data$lpsa-y_pred5)^2)
+
+
+print(mse5)
+print(sd5)
+
+```
+
+Thus, the test MSE is 3.680 and standard deviation is 3.239. The final model has 7 predictors. 
+
+
+\newpage
+
+### Discussion 
+
+It can be seen that model chosen using BIC has a lower number of parameters included in the final model. For example, both best subset method and lasso using BIC criterion choose a model with 2 predictors. On the other hand, both methods using cv choose a full model with 8 predictors. Although training MSE is smaller using cross validation, model chosen by BIC seems to perform better on test data in our case. The final result shows that best subset method using BIC has the best performance on test data, with test MSE 1.536.
+
